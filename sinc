@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+
+# SINC Simple CI Deployment Script
+# Written by Didiet Noor <lynxluna@gmail.com>
+# Works in Linux and Mac OSX (sorry windows users, you have no bash)
+
+# server configuration
+# D_UNAME remote user name e.g. 'ubuntu' or 'johnsmith'
+# D_SERVER remote server name e.g. remote.compute.cloud.com
+
+D_UNAME=""
+D_SERVER=""
+
+#remote directory (e.g /var/www/your-project)
+D_DIRECTORY=""
+
+# CHEAT SHEET FOR PRODUCTION
+CURRENT_DATE=`date +%Y-%m-%d`
+
+# Directory Prefix
+DIRPREFIX="deploy"
+
+# Link name for current active deployment
+LINKNAME="current"
+
+TARGET_DIR_NAME="$D_DIRECTORY/$DIRPREFIX-$CURRENT_DATE"
+TARGET_PATH="/tmp/$DIRPREFIX-$CURRENT_DATE"
+
+# command
+SSH="ssh"
+SCP="scp"
+RSYNC="rsync"
+GIT="git"
+
+# git branch to be uploaded
+DEV_BRANCH=$1
+CERTIFICATE="$HOME/.ec2/fuscu-pair.pem"
+
+HIGH_START="\\033[1;37m"
+HIGH_END="\\033[0;0m"
+
+# checking out master branch
+echo "SINC by Didiet Noor <lynxluna@gmail.com>"
+echo "----"
+echo "Fuddling Git.."
+echo -e "Syncing repo to $HIGH_START$D_SERVER$HIGH_END"
+echo "Exporting $DEV_BRANCH.."
+
+if [ -e $TARGET_PATH ] ; then rm -fr $TARGET_PATH ; fi
+mkdir $TARGET_PATH
+git archive $DEV_BRANCH | tar -x -C $TARGET_PATH
+
+#copying to serevr
+echo ""
+echo "Copying to target server commenced.."
+echo -e "Target Server     : $HIGH_START$D_SERVER$HIGH_END"
+echo -e "Directory         : $HIGH_START$TARGET_DIR_NAME$HIGH_END"
+echo -e "Using Certificate : $HIGH_START$CERTIFICATE$HIGH_END"
+
+# This relink command is little messy, I tend to use different .htaccess on each server
+# making directory
+RELINK_COMMAND="if [ -e $D_DIRECTORY/current ] ; then rm -fr $D_DIRECTORY/current ; fi ;\
+if [ -e $TARGET_DIR_NAME/site/system/application/config ] ; then rm -fr $TARGET_DIR_NAME/site/system/application/config ; fi ;\
+if [ -e $TARGET_DIR_NAME/secured/system/application/config ] ; then rm -fr $TARGET_DIR_NAME/secured/system/application/config ; fi ;\
+if [ -e $TARGET_DIR_NAME/site/uploads ] ; then rm -fr $TARGET_DIR_NAME/site/uploads ; fi ;\
+if [ -e $TARGET_DIR_NAME/site/.htaccess ] ; then rm -fr $TARGET_DIR_NAME/site/.htaccess ; fi ;\
+if [ -e $TARGET_DIR_NAME/secured/.htaccess ] ; then rm -fr $TARGET_DIR_NAME/secured/.htaccess ; fi ;\
+ln -fs $TARGET_DIR_NAME $D_DIRECTORY/current;\
+ln -fs $TARGET_DIR_NAME/site/system/application/config.com $TARGET_DIR_NAME/site/system/application/config;\
+ln -fs $TARGET_DIR_NAME/secured/system/application/config.com $TARGET_DIR_NAME/secured/system/application/config;\
+mkdir $TARGET_DIR_NAME/site/uploads; setfacl -m u:www-data:rwx $TARGET_DIR_NAME/site/uploads;\
+ln -fs $TARGET_DIR_NAME/htaccess/secured.com $TARGET_DIR_NAME/secured/.htaccess;\
+ln -fs $TARGET_DIR_NAME/htaccess/site.com $TARGET_DIR_NAME/site/.htaccess"
+
+SSH_COMMAND="$SSH -i $CERTIFICATE $D_UNAME@$D_SERVER mkdir -pv $TARGET_DIR_NAME"
+RSYNC_COMMAND="$RSYNC --progress -az -e $SSH --exclude .git --exclude --exclude sinc ./$TARGET_PATH/ $D_UNAME@$D_SERVER:$TARGET_DIR_NAME"
+SCP_COMMAND="$SCP -r -i $CERTIFICATE * $D_UNAME@$D_SERVER:$TARGET_DIR_NAME"
+SSH_RELINK_COMMAND="$SSH -i $CERTIFICATE $D_UNAME@$D_SERVER $RELINK_COMMAND"
+
+echo "Making remote dir.."
+$SSH_COMMAND
+
+echo "Syncing.. "
+$RSYNC_COMMAND
+
+echo "Relinking needed symbolic links"
+$SSH_RELINK_COMMAND
+
+rm -fr $TARGET_PATH
+
